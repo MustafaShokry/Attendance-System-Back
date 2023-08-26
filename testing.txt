@@ -1,0 +1,24 @@
+// Route to get attendance data for a course and student
+http://localhost:3000/attendance/1/100001
+http://localhost:3000/attendance/2/100002
+for the following api and function make sure to check first if the student is enrolled in the course
+
+
+// Route to get student ID by email
+http://localhost:3000/student/student1@example.com
+
+// Route to get courses enrolled by a student
+http://localhost:3000/student/100001/courses
+
+// Route to get students enrolled in a course
+http://localhost:3000/course/1/students
+
+// Route to get attendance summary for a student
+http://localhost:3000/student/100001/attendance-summary
+http://localhost:3000/student/100002/attendance-summary
+
+// Route to get attendance summary for a course
+http://localhost:3000/course/1/attendance-summary
+
+// Route to get overall attendance report
+http://localhost:3000/attendance-report
