@@ -31,7 +31,7 @@ async function populateDatabase() {
     await pool.query(`INSERT INTO student (ssn, student_name, na_id, email, st_year, academic_year, dep_id)
                           VALUES (2012073, 'Student 2', 200002, 'student2@example.com', 2, 2024, 2)`);
     await pool.query(`INSERT INTO student (ssn, student_name, na_id, email, st_year, academic_year, dep_id)
-                          VALUES (2012074, 'Student 2', 20000321, 'student3@example.com', 1, 2024, 4)`);
+                          VALUES (2012074, 'Student 3', 20000321, 'student3@example.com', 1, 2024, 4)`);
 
     // Insert instructor data
     await pool.query(`INSERT INTO instructor (ins_id, ins_name, email, na_id, position)
@@ -44,9 +44,9 @@ async function populateDatabase() {
     await pool.query(`INSERT INTO course (co_id, co_name, co_year, co_term, dep_id) VALUES (3, 'Course 3', 1, 1, 4)`);
 
     // Insert teach data
-    await pool.query(`INSERT INTO teach (ins_id, co_id) VALUES (1, 1)`);
-    await pool.query(`INSERT INTO teach (ins_id, co_id) VALUES (2, 2)`);
-    await pool.query(`INSERT INTO teach (ins_id, co_id) VALUES (2, 3)`);
+    // await pool.query(`INSERT INTO teach (ins_id, co_id) VALUES (1, 1)`);
+    // await pool.query(`INSERT INTO teach (ins_id, co_id) VALUES (2, 2)`);
+    // await pool.query(`INSERT INTO teach (ins_id, co_id) VALUES (2, 3)`);
 
     // Insert admin data
     await pool.query(`INSERT INTO admin (username, pass) VALUES ('admin1', 'adminpassword1')`);

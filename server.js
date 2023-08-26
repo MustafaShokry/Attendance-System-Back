@@ -152,7 +152,7 @@ async function processDataWithCourseId() {
       [Co_id, date]
     );
 
-    
+
 
     if (scheduleResult.length === 0) {
       // Insert the schedule record into the course_schedule table
@@ -1200,7 +1200,7 @@ async function enrollStudentsMainstream(term) {
 
 
 
-
+//////////////////////////////////  Data Entry   //////////////////////////////////
 
 function downloadExcelTemplateStudent(res) {
   const workbook = new ExcelJS.Workbook();
@@ -1247,7 +1247,7 @@ function downloadExcelTemplateInstructor(res) {
   const worksheet = workbook.addWorksheet('Sheet1');
 
   // Add headers to the worksheet
-  worksheet.addRow(['Instructor name', 'Position']);
+  worksheet.addRow(['Instructor Name', 'Position']);
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename=instructors-template.xlsx');
@@ -1272,6 +1272,48 @@ function downloadExcelTemplateCourse(res) {
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename=courses-template.xlsx');
+
+  workbook.xlsx.write(res)
+    .then(() => {
+      res.end();
+    })
+    .catch(error => {
+      console.error('Error sending Excel template:', error);
+      res.status(500).json({ error: 'Error sending Excel template' });
+    });
+}
+
+async function downloadExcelTemplateTeaching(res) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Sheet1');
+
+  // Add headers to the worksheet
+  worksheet.addRow(['Instructor Name', 'Course Code']);
+
+
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename=instructor-course-template.xlsx');
+
+  workbook.xlsx.write(res)
+    .then(() => {
+      res.end();
+    })
+    .catch(error => {
+      console.error('Error sending Excel template:', error);
+      res.status(500).json({ error: 'Error sending Excel template' });
+    });
+}
+
+async function downloadExcelTemplateEnroll(res) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Sheet1');
+
+  // Add headers to the worksheet
+  worksheet.addRow(['Student Name', 'Course Code']);
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename=student-course-template.xlsx');
 
   workbook.xlsx.write(res)
     .then(() => {
@@ -1407,6 +1449,89 @@ async function processAndInsertCourseRecords(worksheet) {
   await insertData('course', courseRecords);
   await enrollStudentsMainstream(1);
 }
+
+// Function to process and insert teaching records from Excel
+async function processAndInsertTeaching(worksheet) {
+
+  await worksheet.eachRow({ includeEmpty: false }, async (row, rowNumber) => {
+    // Skip the first row
+    if (rowNumber === 1) {
+      return;
+    }
+
+    const instructorName = row.getCell(1).value;
+    const courseCode = row.getCell(2).value;
+
+    // Fetch instructor and course IDs based on names and codes
+    const [instructorResult] = await poolPromise.query(
+      'SELECT ins_id FROM instructor WHERE ins_name = ?',
+      [instructorName]
+    );
+
+    const [courseResult] = await poolPromise.query(
+      'SELECT co_id FROM course WHERE co_id = ?',
+      [courseCode]
+    );
+
+    if (instructorResult.length === 1 && courseResult.length === 1) {
+      const ins_id = instructorResult[0].ins_id;
+      const co_id = courseResult[0].co_id;
+
+      // Construct a teaching record
+      const teachingRecord = [{
+        ins_id,
+        co_id,
+      }];
+      await insertData('teach', teachingRecord);
+    } else {
+      console.error('Instructor or course not found in the database.');
+    }
+  });
+}
+
+// Function to process and insert student-course records into the database
+async function processAndInsertEnroll(worksheet) {
+
+  await worksheet.eachRow({ includeEmpty: false }, async (row, rowNumber) => {
+    // Skip the first row
+    if (rowNumber === 1) {
+      return;
+    }
+
+    const studentName = row.getCell(1).value;
+    const courseCode = row.getCell(2).value;
+
+    // Fetch student and course IDs based on names and codes
+    const [studentResult] = await poolPromise.query(
+      'SELECT ssn FROM student WHERE student_name = ?',
+      [studentName]
+    );
+
+    const [courseResult] = await poolPromise.query(
+      'SELECT co_id FROM course WHERE co_id = ?',
+      [courseCode]
+    );
+
+    if (studentResult.length === 1 && courseResult.length === 1) {
+      const ssn = studentResult[0].ssn;
+      const co_id = courseResult[0].co_id;
+
+      // Construct a student-course record
+      const studentCourseRecord = [{
+        ssn,
+        co_id,
+      }];
+
+      await insertData('enroll', studentCourseRecord);
+    } else {
+      console.error('Student or course not found in the database.');
+    }
+  }); 
+}
+
+
+
+
 
 
 
@@ -1910,6 +2035,170 @@ app.post('/admin/login', async (req, res) => {
 });
 
 
+// Route to download Excel template for student
+app.get('/download-excel-template-student', (req, res) => {
+  downloadExcelTemplateStudent(res);
+});
+// Route to download Excel template for course
+app.get('/download-excel-template-course', (req, res) => {
+  downloadExcelTemplateCourse(res);
+});
+// Route to download Excel template for department
+app.get('/download-excel-template-department', (req, res) => {
+  downloadExcelTemplateDepartment(res);
+});
+// Route to download Excel template for instructor
+app.get('/download-excel-template-instructor', (req, res) => {
+  downloadExcelTemplateInstructor(res);
+});
+// Route to download Excel template for teach
+app.get('/download-excel-template-teach', (req, res) => {
+  downloadExcelTemplateTeaching(res);
+});
+// Route to download Excel template for enroll
+app.get('/download-excel-template-enroll', (req, res) => {
+  downloadExcelTemplateEnroll(res);
+});
+
+
+// Set up multer for file uploading
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads'); // Uploads will be stored in the "uploads" directory
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '-' + file.originalname);
+  }
+});
+const upload = multer({ storage: storage });
+
+// Upload and process filled Excel file for student 
+app.post('/upload-excel-file-student', upload.single('excelFile'), async (req, res) => {
+  const excelFilePath = req.file.path;
+  try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(excelFilePath);
+
+    const worksheet = workbook.getWorksheet('Sheet1');
+    await processAndInsertStudentRecords(worksheet);
+
+    res.json({ message: 'Data uploaded and processed successfully' });
+  } catch (error) {
+    console.error('Error processing uploaded Excel file:', error);
+    res.status(500).json({ error: 'Error processing uploaded Excel file' });
+  } finally {
+    // Delete the uploaded file
+    fs.unlinkSync(excelFilePath);
+  }
+});
+
+// Upload and process filled Excel file for department 
+app.post('/upload-excel-file-department', upload.single('excelFile'), async (req, res) => {
+  const excelFilePath = req.file.path;
+  try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(excelFilePath);
+
+    const worksheet = workbook.getWorksheet('Sheet1');
+    await processAndInsertDepartmentRecords(worksheet);
+
+    res.json({ message: 'Data uploaded and processed successfully' });
+  } catch (error) {
+    console.error('Error processing uploaded Excel file:', error);
+    res.status(500).json({ error: 'Error processing uploaded Excel file' });
+  } finally {
+    // Delete the uploaded file
+    fs.unlinkSync(excelFilePath);
+  }
+});
+
+// Upload and process filled Excel file for instructor 
+app.post('/upload-excel-file-instructor', upload.single('excelFile'), async (req, res) => {
+  const excelFilePath = req.file.path;
+  try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(excelFilePath);
+
+    const worksheet = workbook.getWorksheet('Sheet1');
+    await processAndInsertInstructorRecords(worksheet);
+
+    res.json({ message: 'Data uploaded and processed successfully' });
+  } catch (error) {
+    console.error('Error processing uploaded Excel file:', error);
+    res.status(500).json({ error: 'Error processing uploaded Excel file' });
+  } finally {
+    // Delete the uploaded file
+    fs.unlinkSync(excelFilePath);
+  }
+});
+
+// Upload and process filled Excel file for course
+app.post('/upload-excel-file-course', upload.single('excelFile'), async (req, res) => {
+  const excelFilePath = req.file.path;
+  try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(excelFilePath);
+
+    const worksheet = workbook.getWorksheet('Sheet1');
+    await processAndInsertCourseRecords(worksheet);
+
+    res.json({ message: 'Data uploaded and processed successfully' });
+  } catch (error) {
+    console.error('Error processing uploaded Excel file:', error);
+    res.status(500).json({ error: 'Error processing uploaded Excel file' });
+  } finally {
+    // Delete the uploaded file
+    fs.unlinkSync(excelFilePath);
+  }
+});
+
+// Upload and process filled Excel file for teach
+app.post('/upload-excel-file-teach', upload.single('excelFile'), async (req, res) => {
+  const excelFilePath = req.file.path;
+  
+  try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(excelFilePath);
+
+    const worksheet = workbook.getWorksheet('Sheet1');
+
+
+
+    await processAndInsertTeaching(worksheet);
+
+
+    res.json({ message: 'Data uploaded and processed successfully' });
+  } catch (error) {
+    console.error('Error processing uploaded Excel file:', error);
+    res.status(500).json({ error: 'Error processing uploaded Excel file' });
+  } finally {
+    // Delete the uploaded file
+    fs.unlinkSync(excelFilePath);
+  }
+});
+
+// Upload and process filled Excel file for enroll
+app.post('/upload-excel-file-enroll', upload.single('excelFile'), async (req, res) => {
+  const excelFilePath = req.file.path;
+
+  try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(excelFilePath);
+
+    const worksheet = workbook.getWorksheet('Sheet1');
+
+    await processAndInsertEnroll(worksheet);
+
+    res.json({ message: 'Data uploaded and processed successfully' });
+  } catch (error) {
+    console.error('Error processing uploaded Excel file:', error);
+    res.status(500).json({ error: 'Error processing uploaded Excel file' });
+  } finally {
+    // Delete the uploaded file
+    fs.unlinkSync(excelFilePath);
+  }
+});
 
 
 
@@ -2115,121 +2404,14 @@ app.get('/update-student-ssn-history', async (req, res) => {
 
 
 
-// Route to download Excel template for student
-app.get('/download-excel-template-student', (req, res) => {
-  downloadExcelTemplateStudent(res);
-});
-// Route to download Excel template for course
-app.get('/download-excel-template-course', (req, res) => {
-  downloadExcelTemplateCourse(res);
-});
-// Route to download Excel template for department
-app.get('/download-excel-template-department', (req, res) => {
-  downloadExcelTemplateDepartment(res);
-});
-// Route to download Excel template for instructor
-app.get('/download-excel-template-instructor', (req, res) => {
-  downloadExcelTemplateInstructor(res);
-});
 
 
 
-// Set up multer for file uploading
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads'); // Uploads will be stored in the "uploads" directory
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
-  }
-});
-const upload = multer({ storage: storage });
-
-// Upload and process filled Excel file for student 
-app.post('/upload-excel-file-student', upload.single('excelFile'), async (req, res) => {
-  const excelFilePath = req.file.path;
-  try {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(excelFilePath);
-
-    const worksheet = workbook.getWorksheet('Sheet1');
-    await processAndInsertStudentRecords(worksheet);
-
-    res.json({ message: 'Data uploaded and processed successfully' });
-  } catch (error) {
-    console.error('Error processing uploaded Excel file:', error);
-    res.status(500).json({ error: 'Error processing uploaded Excel file' });
-  } finally {
-    // Delete the uploaded file
-    fs.unlinkSync(excelFilePath);
-  }
-});
-
-// Upload and process filled Excel file for department 
-app.post('/upload-excel-file-department', upload.single('excelFile'), async (req, res) => {
-  const excelFilePath = req.file.path;
-  try {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(excelFilePath);
-
-    const worksheet = workbook.getWorksheet('Sheet1');
-    await processAndInsertDepartmentRecords(worksheet);
-
-    res.json({ message: 'Data uploaded and processed successfully' });
-  } catch (error) {
-    console.error('Error processing uploaded Excel file:', error);
-    res.status(500).json({ error: 'Error processing uploaded Excel file' });
-  } finally {
-    // Delete the uploaded file
-    fs.unlinkSync(excelFilePath);
-  }
-});
-
-// Upload and process filled Excel file for instructor 
-app.post('/upload-excel-file-instructor', upload.single('excelFile'), async (req, res) => {
-  const excelFilePath = req.file.path;
-  try {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(excelFilePath);
-
-    const worksheet = workbook.getWorksheet('Sheet1');
-    await processAndInsertInstructorRecords(worksheet);
-
-    res.json({ message: 'Data uploaded and processed successfully' });
-  } catch (error) {
-    console.error('Error processing uploaded Excel file:', error);
-    res.status(500).json({ error: 'Error processing uploaded Excel file' });
-  } finally {
-    // Delete the uploaded file
-    fs.unlinkSync(excelFilePath);
-  }
-});
-
-// Upload and process filled Excel file for course
-app.post('/upload-excel-file-course', upload.single('excelFile'), async (req, res) => {
-  const excelFilePath = req.file.path;
-  try {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(excelFilePath);
-
-    const worksheet = workbook.getWorksheet('Sheet1');
-    await processAndInsertCourseRecords(worksheet);
-
-    res.json({ message: 'Data uploaded and processed successfully' });
-  } catch (error) {
-    console.error('Error processing uploaded Excel file:', error);
-    res.status(500).json({ error: 'Error processing uploaded Excel file' });
-  } finally {
-    // Delete the uploaded file
-    fs.unlinkSync(excelFilePath);
-  }
-});
 
 
 
 module.exports = { updateAbsentDays, processAllPendingWarnings, updatePendingWarnings, processDataWithCourseId };
-processDataWithCourseId();
+// processDataWithCourseId();
 // Start the server
 app.listen(port, '0.0.0.0', () => {
   console.log(`Example app listening on port ${port}`);
