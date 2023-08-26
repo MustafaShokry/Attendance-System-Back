@@ -34,7 +34,7 @@ const dbConfig = {
   user: 'root',
   password: '',
   database: 'final',
-  port: 3307
+  port: 3306
 };
 // Create connection pools
 const poolPromise = mysqlPromise.createPool(dbConfig);
