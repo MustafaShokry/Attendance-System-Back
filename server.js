@@ -34,7 +34,7 @@ const dbConfig = {
   user: 'root',
   password: '',
   database: 'final',
-  port: 3306
+  port: 3307
 };
 // Create connection pools
 const poolPromise = mysqlPromise.createPool(dbConfig);
@@ -46,9 +46,9 @@ const suspendedThreshold = 3;
 
 
 
+//////////////////////////////////  Handle Hardware   //////////////////////////////////
 
-
-
+// Function to read an Excel file
 async function readExcelFile(filePath, sheetName) {
   const readFileAsync = promisify(fs.readFile);
   try {
@@ -73,7 +73,108 @@ async function readExcelFile(filePath, sheetName) {
   }
 }
 
+// Function to get the list of courses taught by an instructor that match the student's department and year
+async function getCoursesTaughtByInstructorMatchingStudent(instructorId, ssn) {
+  try {
+    // Fetch courses taught by the instructor
+    const [courses] = await poolPromise.query(
+      'SELECT co_id FROM teach WHERE ins_id = ?',
+      [instructorId]
+    );
 
+    if (courses.length === 0) {
+      return [];
+    }
+
+    const courseIds = courses.map((course) => course.co_id);
+
+    // Fetch student's department and year based on the provided ssn
+    const [studentInfo] = await poolPromise.query(
+      'SELECT st_year, dep_id FROM student WHERE ssn = ?',
+      [ssn]
+    );
+
+    if (studentInfo.length === 0) {
+      return [];
+    }
+
+    const studentYear = studentInfo[0].st_year;
+    const studentDepId = studentInfo[0].dep_id;
+
+    // Fetch courses matching the student's year and department
+    const [matchingCourses] = await poolPromise.query(`
+      SELECT co_id, co_name
+      FROM course
+      WHERE co_id IN (?) AND co_year = ? AND dep_id = ?
+    `, [courseIds, studentYear, studentDepId]);
+
+    return matchingCourses;
+  } catch (error) {
+    console.error('Error fetching matching courses:', error);
+    throw new Error('Error fetching matching courses');
+  }
+}
+
+// process the data to be inserted into the database
+function processData(rawData, Co_id) {
+  const ins_id = Object.keys(rawData[0])[0];
+
+  const date = formatDate(new Date());
+
+  const data = rawData.map((object) => {
+    const newObj = {
+      ssn: object[ins_id],
+      co_id: Co_id,
+      atten_date: date,
+    };
+    return newObj;
+  });
+  return data;
+}
+
+// process the data from the Excel file
+async function processDataWithCourseId() {
+  try {
+    const data = await readExcelFile('09-50.csv', 'Sheet1');
+
+    // Get the current date in YYYY-MM-DD format
+    const date = formatDate(new Date());
+
+    const ins_id = Object.keys(data[0])[0];
+    const ssn = data[0][ins_id];
+
+    const Co_list = await getCoursesTaughtByInstructorMatchingStudent(ins_id, ssn);
+    const Co_id = Co_list[0].co_id;
+
+    // Check if the record already exists in the course_schedule table
+    const [scheduleResult] = await pool.promise().query(
+      'SELECT co_id FROM course_schedule WHERE co_id = ? AND schedule_date = ?',
+      [Co_id, date]
+    );
+
+    
+
+    if (scheduleResult.length === 0) {
+      // Insert the schedule record into the course_schedule table
+      await pool.promise().query(
+        'INSERT INTO course_schedule (co_id, schedule_date) VALUES (?, ?)',
+        [Co_id, date]
+      );
+    }
+
+    const result = processData(data, Co_id);
+    await insertData('attend', result);
+  } catch (error) {
+    console.error('Error processing data:', error);
+  }
+}
+
+
+
+
+//////////////////////////////////  Puplic   //////////////////////////////////
+
+// Function to insert data into a table
 async function insertData(tableName, data) {
   const query = `INSERT INTO ${tableName} SET ?`;
 
@@ -123,81 +224,20 @@ async function insertData(tableName, data) {
   }
 }
 
-function GetCourseIdByInstructorId(insId) {
-  const tableName = 'teach';
-  
-  return new Promise((resolve, reject) => {
-    pool.getConnection((err, connection) => {
-      if (err) {
-        console.error('Error getting connection:', err.message);
-        reject(err);
-        return;
-      }
-      const query = 'SELECT Co_id FROM ?? WHERE Ins_id = ?';
-      connection.query(query, [tableName, insId], (err, results) => {
-        connection.release();
-        if (err) {
-          console.error('Error searching for course ID:', err);
-          reject(err);
-        } else {
-          if (results.length > 0) {
-            const courseId = results[0].Co_id;
-            //console.log('Course ID for instructor ID ' + insId + ':', courseId);
-            resolve(courseId);
-          } else {
-            console.log('No course found for instructor ID:', insId);
-            resolve(null);
-          }
-        }
-      });
-    });
-  });
+// format the date to be inserted into the database
+function formatDate(dbDateString) {
+  const dbDate = new Date(dbDateString);
+
+  const year = dbDate.getFullYear();
+  const month = String(dbDate.getMonth() + 1).padStart(2, '0');
+  const day = String(dbDate.getDate()).padStart(2, '0');
+
+  const formattedDate = `${year}-${month}-${day}`;
+  return formattedDate;
 }
 
-function processData(rawData, Co_id) {
-  const ins_id = Object.keys(rawData[0])[0];
 
-  const currentDate = new Date();
-  const formattedDate = currentDate.toISOString().slice(0, 10);
-
-  const data = rawData.map((object) => {
-    const newObj = {
-      ssn: object[ins_id],
-      co_id: Co_id,
-      atten_date: formattedDate,
-    };
-    return newObj;
-  });
-  return data;
-}
-
-async function processDataWithCourseId() {
-  try {
-    const data = await readExcelFile('09-50.csv', 'Sheet1');
-    const ins_id = Object.keys(data[0])[0];
-    const Co_id = await GetCourseIdByInstructorId(ins_id);
-
-    // Check if the record already exists in the course_schedule table
-    const [scheduleResult] = await pool.promise().query(
-      'SELECT co_id FROM course_schedule WHERE co_id = ? AND schedule_date = ?',
-      [Co_id, new Date().toISOString().slice(0, 10)]
-    );
-
-    if (scheduleResult.length === 0) {
-      // Insert the schedule record into the course_schedule table
-      await pool.promise().query(
-        'INSERT INTO course_schedule (co_id, schedule_date) VALUES (?, ?)',
-        [Co_id, new Date().toISOString().slice(0, 10)]
-      );
-    }
-
-    const result = processData(data, Co_id);
-    await insertData('attend', result);
-  } catch (error) {
-    console.error('Error processing data:', error);
-  }
-}
-
+//////////////////////////////////  student   //////////////////////////////////
 
 async function getStudentsEnrolledInCourse(courseId) {
   try {
@@ -216,18 +256,6 @@ async function getStudentsEnrolledInCourse(courseId) {
   }
 }
 
-
-function formatDate(dbDateString) {
-  const dbDate = new Date(dbDateString);
-
-  const year = dbDate.getFullYear();
-  const month = String(dbDate.getMonth() + 1).padStart(2, '0');
-  const day = String(dbDate.getDate()).padStart(2, '0');
-
-  const formattedDate = `${year}-${month}-${day}`;
-  return formattedDate;
-}
-
 async function getAttendanceByStudentAndCourse(studentId, courseId) {
   try {
     // Step 1: Fetch course dates from the course_schedule table
@@ -235,8 +263,7 @@ async function getAttendanceByStudentAndCourse(studentId, courseId) {
       'SELECT schedule_date FROM course_schedule WHERE co_id = ?',
       [courseId]
     );
-    const attendanceDates = courseDates.map((row) => 
-    {
+    const attendanceDates = courseDates.map((row) => {
       const formattedDate = formatDate(row.schedule_date);
       return formattedDate;
     });
@@ -268,7 +295,6 @@ async function getAttendanceByStudentAndCourse(studentId, courseId) {
     throw new Error('Error fetching data from the database: ' + error.message);
   }
 }
-
 
 function mergeAttendanceData(attendanceData) {
   try {
@@ -811,7 +837,7 @@ async function updatePendingWarnings() {
         }
       }
     }
-    
+
     console.log('Pending warnings updated successfully.');
   } catch (error) {
     console.error('Error updating pending warnings:', error);
@@ -819,7 +845,7 @@ async function updatePendingWarnings() {
 }
 
 //Todo change the email to student email, uncomment the code for sending email
-async function sendStudentEmail(ssn, co_id, state, confirmation) {          
+async function sendStudentEmail(ssn, co_id, state, confirmation) {
   try {
     // Fetch student email based on ssn
     const [studentData] = await poolPromise.query(
@@ -832,7 +858,7 @@ async function sendStudentEmail(ssn, co_id, state, confirmation) {
       return;
     }
 
-    const studentEmail =  'mostafashokry21@gmail.com';
+    const studentEmail = 'mostafashokry21@gmail.com';
     console.log(`Student email: ${studentData[0].email}`);
 
     // Compose the email text
@@ -872,7 +898,7 @@ async function sendStudentEmail(ssn, co_id, state, confirmation) {
     Sincerely,
     mis, Shoubra Faculty of Engineering-Benha University
     `;
-   
+
     // Compose email
     const mailOptions = {
       from: 'mostafashokry2121@gmail.com', // Replace with your email
@@ -880,7 +906,7 @@ async function sendStudentEmail(ssn, co_id, state, confirmation) {
       subject: 'Warning Notification',
       text: emailText
     };
-  
+
     // Send the email
     //await transporter.sendMail(mailOptions);
     console.log(`Email sent to student ${ssn}: ${state}`);
@@ -893,12 +919,12 @@ async function processAllPendingWarnings() {
   try {
     // Fetch all unprocessed pending warnings
     const [pendingWarnings] = await poolPromise.query('SELECT * FROM pending_warnings WHERE processed = 0');
-    
+
     for (const warning of pendingWarnings) {
       const { ssn, co_id, state } = warning;
 
       // Send email to the student
-      sendStudentEmail(ssn, co_id, state,'pending');
+      sendStudentEmail(ssn, co_id, state, 'pending');
 
       // Mark the pending warning as processed
       await poolPromise.query(
@@ -1016,7 +1042,7 @@ async function confirmAndMovePendingWarning(ssn, co_id) {
     }
 
     const pendingWarning = pendingWarningResults[0];
-    
+
     // Notify the student
     sendStudentEmail(pendingWarning.ssn, pendingWarning.co_id, pendingWarning.state, "confirmed");
 
@@ -1121,7 +1147,7 @@ async function getHistoricalCourseStudents(historicalCoId) {
   }
 }
 
-async function updateStudentSSNHistory () {
+async function updateStudentSSNHistory() {
   try {
     const [students] = await poolPromise.query('SELECT na_id, academic_year FROM student');
 
@@ -1150,13 +1176,13 @@ async function enrollStudentsMainstream(term) {
       const { ssn, dep_id, st_year } = student;
 
       const matchingCourses = await poolPromise.query(
-        'SELECT co_id FROM course WHERE dep_id = ? AND co_year = ? AND co_term = ?', 
+        'SELECT co_id FROM course WHERE dep_id = ? AND co_year = ? AND co_term = ?',
         [dep_id, st_year, term]
       );
-    
+
       for (const course of matchingCourses[0]) {
         const [existingEnrollment] = await poolPromise.query(
-          'SELECT * FROM enroll WHERE ssn = ? AND co_id = ?', 
+          'SELECT * FROM enroll WHERE ssn = ? AND co_id = ?',
           [ssn, course.co_id]
         );
 
@@ -1370,7 +1396,7 @@ async function processAndInsertCourseRecords(worksheet) {
       co_name,
       co_id,
       co_year,
-      co_term : 1,
+      co_term: 1,
       dep_id
     };
 
@@ -1423,7 +1449,7 @@ app.get('/student/:studentId/data', async (req, res) => {
       'WHERE s.ssn = ?',
       [ssn]
     );
-    
+
     if (studentData.length === 0) {
       return res.status(404).json({ error: 'Student not found' });
     }
@@ -1493,6 +1519,63 @@ app.get('/student/:studentId/courses', async (req, res) => {
     res.status(500).json({ error: 'Error fetching enrolled courses' });
   }
 });
+
+// Route to report illness
+app.post('/illness-report', async (req, res) => {
+  const { ssn, co_id, date_of_absent, report_text, attachment } = req.query;
+
+  try {
+    // Check if the student and course exist
+    const [studentResult] = await pool.promise().query('SELECT ssn FROM student WHERE ssn = ?', [ssn]);
+    const [courseResult] = await pool.promise().query('SELECT co_id FROM course WHERE co_id = ?', [co_id]);
+
+    if (studentResult.length === 0 || courseResult.length === 0) {
+      return res.status(404).json({ message: 'Student or course not found' });
+    }
+
+    // Check if the report already exists for the same student, course, and date
+    const [existingReports] = await pool.promise().query(
+      'SELECT report_id FROM pending_ill_reports WHERE ssn = ? AND co_id = ? AND date_of_absent = ?',
+      [ssn, co_id, date_of_absent]
+    );
+
+    if (existingReports.length > 0) {
+      return res.status(400).json({ message: 'Illness report already exists for this date' });
+    }
+
+    // Check if the date already exists for the given student and course in the attend table
+    const [existingAttendances] = await pool.promise().query(
+      'SELECT atten_date FROM attend WHERE ssn = ? AND co_id = ? AND atten_date = ?',
+      [ssn, co_id, date_of_absent]
+    );
+
+    if (existingAttendances.length > 0) {
+      return res.status(400).json({ message: 'Attendance record already exists for this date' });
+    }
+
+    // Check if the date exists in the course schedule
+    const [courseSchedule] = await pool.promise().query(
+      'SELECT schedule_date FROM course_schedule WHERE co_id = ? AND schedule_date = ?',
+      [co_id, date_of_absent]
+    );
+
+    if (courseSchedule.length === 0) {
+      return res.status(400).json({ message: 'Date does not exist in the course schedule' });
+    }
+
+    // Insert the illness report into the pending_ill_reports table
+    await pool.promise().query(
+      'INSERT INTO pending_ill_reports (ssn, co_id, date_of_absent, report_text, attachment) VALUES (?, ?, ?, ?, ?)',
+      [ssn, co_id, date_of_absent, report_text, attachment]
+    );
+
+    return res.json({ message: 'Illness report added successfully' });
+  } catch (error) {
+    console.error('Error adding illness report:', error);
+    return res.status(500).json({ message: 'Error adding illness report' });
+  }
+});
+
 
 
 
@@ -1635,7 +1718,7 @@ app.get('/get-pending-warnings/:instructorId', async (req, res) => {
     const instructorId = req.params.instructorId;
     const pendingWarnings = await getPendingWarningsForInstructor(instructorId);
     pendingWarnings.map((warning) => {
-      warning.state = mapWarningStateToReadable( warning.state).warningType;
+      warning.state = mapWarningStateToReadable(warning.state).warningType;
     });
     res.json({ pendingWarnings });
   } catch (error) {
@@ -1650,7 +1733,7 @@ app.get('/get-resolved-warnings/:instructorId', async (req, res) => {
     const instructorId = req.params.instructorId;
     const resolvedWarnings = await getResolvedWarningsForInstructor(instructorId);
     resolvedWarnings.map((warning) => {
-      warning.state = mapWarningStateToReadable( warning.state).warningType;
+      warning.state = mapWarningStateToReadable(warning.state).warningType;
     });
     res.json({ resolvedWarnings });
   } catch (error) {
@@ -2012,108 +2095,8 @@ app.get('/update-student-ssn-history', async (req, res) => {
 
 
 
-// // Route to report illness
-// app.post('/illness-report', async (req, res) => {
-//   const { ssn, co_id, date_of_absent, report_text, attachment } = req.query;
 
-//   try {
-//     // Check if the student and course exist
-//     const [studentResult] = await pool.promise().query('SELECT ssn FROM student WHERE ssn = ?', [ssn]);
-//     const [courseResult] = await pool.promise().query('SELECT co_id FROM course WHERE co_id = ?', [co_id]);
 
-//     if (studentResult.length === 0 || courseResult.length === 0) {
-//       return res.status(404).json({ message: 'Student or course not found' });
-//     }
-
-//     // Check if the report already exists for the same student, course, and date
-//     const [existingReports] = await pool.promise().query(
-//       'SELECT report_id FROM pending_ill_reports WHERE ssn = ? AND co_id = ? AND date_of_absent = ?',
-//       [ssn, co_id, date_of_absent]
-//     );
-
-//     if (existingReports.length > 0) {
-//       return res.status(400).json({ message: 'Illness report already exists for this date' });
-//     }
-
-   
-//     // Check if the date already exists for the given student and course in the attend table
-//     const [existingAttendances] = await pool.promise().query(
-//       'SELECT atten_date FROM attend WHERE ssn = ? AND co_id = ? AND atten_date = ?',
-//       [ssn, co_id, date_of_absent]
-//     );
-    
-
-//     if (existingAttendances.length > 0) {
-//       return res.status(400).json({ message: 'Attendance record already exists for this date' });
-//     }
-
-//     // Insert the illness report into the pending_ill_reports table
-//     await pool.promise().query(
-//       'INSERT INTO pending_ill_reports (ssn, co_id, date_of_absent, report_text, attachment) VALUES (?, ?, ?, ?, ?)',
-//       [ssn, co_id, date_of_absent, report_text, attachment]
-//     );
-
-//     return res.json({ message: 'Illness report added successfully' });
-//   } catch (error) {
-//     console.error('Error adding illness report:', error);
-//     return res.status(500).json({ message: 'Error adding illness report' });
-//   }
-// });
-// Route to report illness
-app.post('/illness-report', async (req, res) => {
-  const { ssn, co_id, date_of_absent, report_text, attachment } = req.query;
-
-  try {
-    // Check if the student and course exist
-    const [studentResult] = await pool.promise().query('SELECT ssn FROM student WHERE ssn = ?', [ssn]);
-    const [courseResult] = await pool.promise().query('SELECT co_id FROM course WHERE co_id = ?', [co_id]);
-
-    if (studentResult.length === 0 || courseResult.length === 0) {
-      return res.status(404).json({ message: 'Student or course not found' });
-    }
-
-    // Check if the report already exists for the same student, course, and date
-    const [existingReports] = await pool.promise().query(
-      'SELECT report_id FROM pending_ill_reports WHERE ssn = ? AND co_id = ? AND date_of_absent = ?',
-      [ssn, co_id, date_of_absent]
-    );
-
-    if (existingReports.length > 0) {
-      return res.status(400).json({ message: 'Illness report already exists for this date' });
-    }
-
-    // Check if the date already exists for the given student and course in the attend table
-    const [existingAttendances] = await pool.promise().query(
-      'SELECT atten_date FROM attend WHERE ssn = ? AND co_id = ? AND atten_date = ?',
-      [ssn, co_id, date_of_absent]
-    );
-
-    if (existingAttendances.length > 0) {
-      return res.status(400).json({ message: 'Attendance record already exists for this date' });
-    }
-
-    // Check if the date exists in the course schedule
-    const [courseSchedule] = await pool.promise().query(
-      'SELECT schedule_date FROM course_schedule WHERE co_id = ? AND schedule_date = ?',
-      [co_id, date_of_absent]
-    );
-
-    if (courseSchedule.length === 0) {
-      return res.status(400).json({ message: 'Date does not exist in the course schedule' });
-    }
-
-    // Insert the illness report into the pending_ill_reports table
-    await pool.promise().query(
-      'INSERT INTO pending_ill_reports (ssn, co_id, date_of_absent, report_text, attachment) VALUES (?, ?, ?, ?, ?)',
-      [ssn, co_id, date_of_absent, report_text, attachment]
-    );
-
-    return res.json({ message: 'Illness report added successfully' });
-  } catch (error) {
-    console.error('Error adding illness report:', error);
-    return res.status(500).json({ message: 'Error adding illness report' });
-  }
-});
 
 
 
@@ -2245,8 +2228,8 @@ app.post('/upload-excel-file-course', upload.single('excelFile'), async (req, re
 
 
 
-module.exports = {updateAbsentDays, processAllPendingWarnings, updatePendingWarnings, processDataWithCourseId};
-
+module.exports = { updateAbsentDays, processAllPendingWarnings, updatePendingWarnings, processDataWithCourseId };
+processDataWithCourseId();
 // Start the server
 app.listen(port, '0.0.0.0', () => {
   console.log(`Example app listening on port ${port}`);
