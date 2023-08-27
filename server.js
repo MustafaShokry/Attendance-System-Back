@@ -1526,7 +1526,7 @@ async function processAndInsertEnroll(worksheet) {
     } else {
       console.error('Student or course not found in the database.');
     }
-  }); 
+  });
 }
 
 
@@ -2156,7 +2156,7 @@ app.post('/upload-excel-file-course', upload.single('excelFile'), async (req, re
 // Upload and process filled Excel file for teach
 app.post('/upload-excel-file-teach', upload.single('excelFile'), async (req, res) => {
   const excelFilePath = req.file.path;
-  
+
   try {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(excelFilePath);
@@ -2315,7 +2315,205 @@ app.get('/attendance-report', async (req, res) => {
 
 
 
+// API endpoint to retrieve statistics
+app.get('/statistics', async (req, res) => {
+  try {
+    const statistics = await fetchStatistics();
 
+    res.json(statistics);
+  } catch (error) {
+    console.error('Error fetching statistics:', error);
+    res.status(500).json({ error: 'Error fetching statistics' });
+  }
+});
+
+// Function to fetch and calculate the statistics
+async function fetchStatistics() {
+  const statistics = {};
+
+  // Total number of courses
+  const [coursesCount] = await poolPromise.query('SELECT COUNT(*) AS count FROM course');
+  statistics.totalCourses = coursesCount[0].count;
+
+  // Total number of instructors
+  const [instructorsCount] = await poolPromise.query('SELECT COUNT(*) AS count FROM instructor');
+  statistics.totalInstructors = instructorsCount[0].count;
+
+  // Total number of students
+  const [studentsCount] = await poolPromise.query('SELECT COUNT(*) AS count FROM student');
+  statistics.totalStudents = studentsCount[0].count;
+
+  // Numbers of credit and mainstream students
+  const [creditStudentsCount] = await poolPromise.query('SELECT COUNT(*) AS count FROM student WHERE ssn LIKE "1%"');
+  statistics.creditStudents = creditStudentsCount[0].count;
+
+  const [mainstreamStudentsCount] = await poolPromise.query('SELECT COUNT(*) AS count FROM student WHERE ssn LIKE "2%"');
+  statistics.mainstreamStudents = mainstreamStudentsCount[0].count;
+
+  // Total number of pending warnings
+  const [pendingWarningsCount] = await poolPromise.query('SELECT COUNT(*) AS count FROM pending_warnings');
+  statistics.totalPendingWarnings = pendingWarningsCount[0].count;
+
+  // Total number of reports
+  const [reportsCount] = await poolPromise.query('SELECT COUNT(*) AS count FROM pending_ill_reports');
+  statistics.totalReports = reportsCount[0].count;
+
+  // Total number of confirmed warnings
+  const [confirmedWarningsCount] = await poolPromise.query('SELECT COUNT(*) AS count FROM warnings');
+  statistics.totalConfirmedWarnings = confirmedWarningsCount[0].count;
+
+  // Total number of departments
+  const [departmentsCount] = await poolPromise.query('SELECT COUNT(*) AS count FROM department');
+  statistics.totalDepartments = departmentsCount[0].count;
+
+  return statistics;
+}
+
+// API endpoint to retrieve courses with information
+app.get('/courses-info', async (req, res) => {
+  try {
+    const coursesInfo = await fetchCoursesInfo();
+
+    res.json(coursesInfo);
+  } catch (error) {
+    console.error('Error fetching course information:', error);
+    res.status(500).json({ error: 'Error fetching course information' });
+  }
+});
+
+// Function to fetch courses with information
+async function fetchCoursesInfo() {
+  const coursesInfo = [];
+
+  // Query to retrieve course information
+  const query = `
+    SELECT
+      c.co_id AS courseCode,
+      c.co_name AS courseName,
+      c.co_year AS year,
+      d.dep_name AS departmentName,
+      COUNT(DISTINCT e.ssn) AS numStudents,
+      i.ins_name AS instructorName,
+      SUM(CASE WHEN pw.state = 'suspended' THEN 1 ELSE 0 END) AS numSuspendedStudents,
+      SUM(CASE WHEN pw.state IN ('first_warning', 'second_warning') THEN 1 ELSE 0 END) AS numPendingWarnings,
+      SUM(CASE WHEN w.state IN ('first_warning', 'second_warning') THEN 1 ELSE 0 END) AS numConfirmedWarnings,
+      COUNT(DISTINCT pr.report_id) AS numReports
+    FROM
+      course c
+    LEFT JOIN
+      department d ON c.dep_id = d.dep_id
+    LEFT JOIN
+      teach t ON c.co_id = t.co_id
+    LEFT JOIN
+      instructor i ON t.ins_id = i.ins_id
+    LEFT JOIN
+      enroll e ON c.co_id = e.co_id
+    LEFT JOIN
+      student s ON e.ssn = s.ssn
+    LEFT JOIN
+      pending_warnings pw ON e.ssn = pw.ssn AND c.co_id = pw.co_id
+    LEFT JOIN
+      warnings w ON e.ssn = w.ssn AND c.co_id = w.co_id
+    LEFT JOIN
+      pending_ill_reports pr ON e.ssn = pr.ssn AND c.co_id = pr.co_id
+    GROUP BY
+      c.co_id, c.co_name, c.co_year, d.dep_name, i.ins_name
+  `;
+
+  const [courses] = await poolPromise.query(query);
+
+  courses.forEach(course => {
+    coursesInfo.push({
+      courseCode: course.courseCode,
+      courseName: course.courseName,
+      year: course.year,
+      departmentName: course.departmentName,
+      numStudents: course.numStudents,
+      instructorName: course.instructorName,
+      numSuspendedStudents: course.numSuspendedStudents,
+      numPendingWarnings: course.numPendingWarnings,
+      numConfirmedWarnings: course.numConfirmedWarnings,
+      numReports: course.numReports,
+    });
+  });
+
+  return coursesInfo;
+}
+
+// API endpoint to retrieve course attendance
+app.get('/course-attendance/:courseId', async (req, res) => {
+  const courseId = req.params.courseId;
+
+  try {
+    const attendanceData = await fetchCourseAttendance(courseId);
+
+    res.json(attendanceData);
+  } catch (error) {
+    console.error('Error fetching course attendance:', error);
+    res.status(500).json({ error: 'Error fetching course attendance' });
+  }
+});
+
+// // Function to fetch course attendance
+// async function fetchCourseAttendance(courseId) {
+//   const attendanceData2 = [];
+
+//   const [students] = await poolPromise.query(
+//     `SELECT s.ssn, s.student_name, s.na_id, s.email, s.st_year, s.dep_id
+//     FROM student s
+//     INNER JOIN enroll e ON s.ssn = e.ssn
+//     WHERE e.co_id = ?`,
+//     [courseId]
+//   );
+//   console.log(students);
+//   students.forEach(async (student) => {
+//     const attendanceData = await getAttendanceByStudentAndCourse(student.ssn, courseId);
+//     const mergedAttendanceData = mergeAttendanceData(attendanceData);
+//     console.log(mergedAttendanceData);
+//   })
+
+//   const [attendance] = await poolPromise.query(query, [courseId]);
+
+//   attendance.forEach(record => {
+//     attendanceData.push({
+//       date: formatDate(record.date),
+//       numStudentsAttended: record.numStudentsAttended,
+//     });
+//   });
+
+//   return attendanceData;
+// }
+
+// Function to fetch course attendance
+async function fetchCourseAttendance(courseId) {
+  const attendanceData = [];
+
+  // Query to retrieve course attendance
+  const query = `
+    SELECT
+      a.atten_date AS date,
+      COUNT(DISTINCT e.ssn) AS numStudentsAttended
+    FROM
+      attend a
+    LEFT JOIN
+      enroll e ON a.ssn = e.ssn AND a.co_id = e.co_id
+    WHERE
+      a.co_id = ?
+    GROUP BY
+      a.atten_date
+  `;
+
+  const [attendance] = await poolPromise.query(query, [courseId]);
+
+  attendance.forEach(record => {
+    attendanceData.push({
+      date: formatDate(record.date),
+      numStudentsAttended: record.numStudentsAttended,
+    });
+  });
+
+  return attendanceData;
+}
 
 
 
